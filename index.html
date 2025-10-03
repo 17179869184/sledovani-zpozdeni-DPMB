@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>    
+    <style>
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            right: 0;
+            left: 0;
+        }
+        .sipka {
+            width: 0;
+            height: 0;
+            border-left: 18px solid transparent;
+            border-right: 18px solid transparent;
+            border-bottom: 36px solid red;
+            position: absolute;
+        }
+        .sipka-text {
+            position: absolute;
+            top: 18px;
+            transform-origin: center;
+        }
+        .marker {
+            width: 10px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 13px;
+            font-weight: bold;
+            text-align: center;
+            background: none;
+            transform-origin: center;
+        }
+        .kolecko {
+            width: 0;
+            height: 0;
+            border: 16px solid red;
+            border-radius: 50%;
+            position: absolute;
+        }
+        .kolecko-text {
+            position: absolute;
+            transform-origin: center;
+        }
+        .leaflet-popup-content-wrapper {
+            background-color: #212121;
+            border-radius: 0%;
+            border: 2px solid #616161;
+        }
+        .leaflet-popup-tip {
+            background-color: #212121;
+        }
+        .leaflet-popup-content {
+            background-color: #212121;
+            color: white;
+        }
+        b {
+            font-size: 15px
+        }
+    </style>
+    <title>Mapa</title>
+</head>
+<body>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <div id="map" style="height: 800px"></div>
+    <p style="position:absolute;top:800px">Nejvyšší zpoždění: <p style="position:absolute;top:800px;left:150px" id="nej"></p></p>
+    <script>
+        var map = L.map('map').setView([49.2, 16.7], 15);
+        var nej = [-1, null];
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a> | &copy; <a href="https://data.brno.cz">data.Brno</a>'
+        }).addTo(map);
+
+        vehicles = new Map;
+        stops = new Map;
+
+        ["zone_id=100","zone_id=101","zone_id=210","zone_id=310","zone_id=510","zone_id=610"].forEach(c => {
+            fetch(`https://services6.arcgis.com/fUWVlHWZNxUvTUh8/arcgis/rest/services/stops/FeatureServer/0/query?where=${c}&outFields=*&f=json`)
+            .then(request => request.json())
+            .then(data => {
+                data = data["features"];
+                data.forEach(e => {
+                    stopid = e["attributes"]["stop_id"].split("U")[1];
+                    stops.set(parseInt(stopid.includes("N") ? stopid.split("N")[0] : stopid.split("Z")[0]), e["attributes"]["stop_name"]);
+                });
+            })
+        });
+
+        function nacistVuz(data) {
+            const vtype = data["attributes"]["vtype"];
+            const id = data["attributes"]["id"];
+            const ltype = data["attributes"]["ltype"];
+            const x = data["geometry"]["x"];
+            const y = data["geometry"]["y"];
+            const bearing = data["attributes"]["bearing"];
+            const lineid = data["attributes"]["lineid"];
+            const linename = data["attributes"]["linename"];
+            const routeid = data["attributes"]["routeid"];
+            const course = data["attributes"]["course"];
+            const lf = data["attributes"]["lf"];
+            const delay = data["attributes"]["delay"];
+            const laststopid = data["attributes"]["laststopid"];
+            const finalstopid = data["attributes"]["finalstopid"];
+            const isinactive = data["attributes"]["isinactive"] === "true";
+            if (!(course.slice(0,-2) < 100 && (isNaN(parseInt(linename)) || parseInt(linename) < 100))) {return}
+            if (delay > nej[0]) {
+                nej = [delay, [linename, stops.get(laststopid), stops.get(finalstopid)]];
+                document.getElementById("nej").innerHTML = `${nej[0]} min.: ${nej[1][0]}, směr ${nej[1][2]}, na zastávce ${nej[1][1]}`;
+            }
+            if (delay == 0) {color = "green"; textcolor = "black"; opacity = 0.4}
+            if (delay > 0) {color = "yellow"; textcolor = "black"; opacity = 0.5}
+            if (delay > 2) {color = "orange"; textcolor = "black"; opacity = 0.8}
+            if (delay > 4) {color = "red"; textcolor = "white"; opacity = 0.9}
+            if (delay > 9) {color = "purple"; textcolor = "white"; opacity = 1}
+            if (delay > 14) {color = "blue"; textcolor = "white"; opacity = 1}
+            if (vehicles.has(id)) {
+                vehicles.get(id).setLatLng([y, x]);
+                vehicles.get(id).setIcon(
+                    L.divIcon({
+                        className: '',
+                        html: isinactive ? `
+                            <div class="marker">
+                                <div class="kolecko" style="border-color: ${color};opacity:${opacity};"></div>
+                                <div class="kolecko-text" style="color: ${textcolor};opacity:${opacity};">${delay}</div>
+                            </div>` : `
+                            <div class="marker" style="transform: rotate(${bearing}deg);">
+                                <div class="sipka" style="border-bottom-color: ${color};opacity:${opacity};"></div>
+                                <div class="sipka-text" style="color: ${textcolor};opacity:${opacity}; transform: rotate(${360-bearing}deg)">${delay}</div>
+                            </div>`,
+                        iconAnchor: [0, 30]
+                    })
+                );
+            } else {
+                vehicles.set(id,
+                    L.marker([y, x], {radius: 10,
+                        icon: L.divIcon({
+                            className: '',
+                            html: isinactive ? `
+                                <div class="marker">
+                                    <div class="kolecko" style="border-color: ${color};opacity:${opacity}"></div>
+                                    <div class="kolecko-text" style="color: ${textcolor};opacity:${opacity}">${delay}</div>
+                                </div>` : `
+                                <div class="marker" style="transform: rotate(${bearing}deg);">
+                                    <div class="sipka" style="border-bottom-color: ${color};opacity:${opacity}"></div>
+                                    <div class="sipka-text" style="color: ${textcolor};opacity:${opacity} transform: rotate(${360-bearing}deg)">${delay}</div>
+                                </div>`,
+                            iconAnchor: [0, 30]
+                        })
+                    })
+                );
+            }
+            vehicles.get(id).addTo(map);
+            delayColor = "red";
+            if (delay <= 5) delayColor = "orange";
+            if (delay == 0) delayColor = "green";
+            vehicles.get(id).bindPopup(`
+            <b style="font-size:24px;background-color:${color};color:${textcolor}">&nbsp;${linename} </b>
+            <b style="font-size:20px">&nbsp;${stops.get(finalstopid) != undefined? stops.get(finalstopid): finalstopid}</b>
+            <br>
+            <div style="display: flex;justify-content: space-between;align-items: center;margin-top:5px;margin-bottom:5px">
+                <b>${stops.get(laststopid) != undefined? stops.get(laststopid): laststopid}</b>
+                <div><img src="zpozdeni.png" style="height:16px;width:16px;margin-right:1px"><b style="color:${delayColor}">${delay} min.</b></div>
+            </div>
+            id: ${id}, vtype: ${vtype}, ltype: ${ltype}, lineid: ${lineid}, routeid: ${routeid}, course: ${course}, lf: ${lf},
+            `);
+        }
+
+        const socket = new WebSocket('wss://gis.brno.cz/geoevent/ws/services/ODAE_public_transit_stream_service/StreamServer/subscribe?outSR=4326');
+
+        socket.onopen = function () {console.log('Připojeno')};
+
+        socket.onmessage = function (event) {nacistVuz(JSON.parse(event.data))};
+    </script>
+</body>
+</html>
